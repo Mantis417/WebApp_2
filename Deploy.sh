@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #Variablar
-ResourceGroup="exam2"
+ResourceGroup="exam5"
 Location="norwayeast"
 Template="Template.json"
 SSHPath="$HOME/.ssh/id_rsa.pub"
