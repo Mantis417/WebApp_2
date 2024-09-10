@@ -1,0 +1,584 @@
+{
+"$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+"contentVersion": "1.0.0.0",
+"parameters": {
+      "adminSshKey": {
+        "type": "string",
+        "metadata": {
+        "description": "The SSH public key used for authentication."
+        }
+      },
+      "ReverseProxy-Cloud": {
+        "type": "string",
+        "metadata": {
+            "description": "Path to script for reversed proxy"
+        }
+      },
+      "WebServer-Cloud": {
+        "type": "string",
+        "metadata": {
+            "description": "path to script for web app"
+        }
+      }
+      
+    },
+"variables": {},
+"functions": [],
+"resources": [
+    //Storage Account
+    {
+        "type": "Microsoft.Storage/storageAccounts",
+        "apiVersion": "2023-04-01",
+        "name": "[concat(resourceGroup().name, 'mantis417')]",
+        "location": "[resourceGroup().location]",
+        "sku": {
+            "name": "Standard_LRS"
+        },
+        "kind": "StorageV2",
+        "properties": {
+            "allowBlobPublicAccess": true
+        }
+    },
+    //Storage Account Container
+    {
+        "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+        "apiVersion": "2023-04-01",
+        "name": "[concat(resourceGroup().name, 'mantis417', '/default/', 'container', uniqueString(resourceGroup().id))]",
+        "dependsOn": [
+            "[resourceId('Microsoft.Storage/storageAccounts', concat(resourceGroup().name, 'mantis417'))]"
+        ],
+        "properties": {
+            "publicAccess": "Blob"
+        }
+    },
+    // Virtual Network and Subnet
+    {
+        "name": "myVnet",
+        "type": "Microsoft.Network/virtualNetworks",
+        "apiVersion": "2023-04-01",
+        "location": "[resourceGroup().location]",
+        "properties": {
+            "addressSpace": {
+                "addressPrefixes": [
+                    "10.0.0.0/16"
+                ]
+            },
+            "subnets": [
+                {
+                    "name": "default",
+                    "properties": {
+                        "addressPrefix": "10.0.0.0/24"
+                    }
+                }
+            ]
+        }
+    },
+    // Public IP x3
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2023-11-01",
+      "name": "BastionHostPublicIP",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "publicIPAllocationMethod": "Dynamic"
+      }
+    },
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2023-11-01",
+      "name": "ReverseProxyPublicIP",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "publicIPAllocationMethod": "Dynamic"
+      }
+    },
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2023-11-01",
+      "name": "WebServerPublicIP",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "publicIPAllocationMethod": "Dynamic"
+      }
+    },
+    // Skapar Application Security Groups för alla roller. 
+    {
+      "type": "Microsoft.Network/applicationSecurityGroups",
+      "apiVersion": "2023-11-01",
+      "name": "BastionHostASG",
+      "location": "[resourceGroup().location]",
+      "properties": {}
+    },
+    {
+      "type": "Microsoft.Network/applicationSecurityGroups",
+      "apiVersion": "2023-11-01",
+      "name": "ReverseProxyASG",
+      "location": "[resourceGroup().location]",
+      "properties": {}
+    },
+    {
+      "type": "Microsoft.Network/applicationSecurityGroups",
+      "apiVersion": "2023-11-01",
+      "name": "WebServerASG",
+      "location": "[resourceGroup().location]",
+      "properties": {}
+    },
+    // Skapar Network Security Groups och regler i dessa. 
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2023-11-01",
+      "name": "BastionHostNSG",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/applicationSecurityGroups','BastionHostASG')]",
+        "[resourceId('Microsoft.Network/applicationSecurityGroups','ReverseProxyASG')]",
+        "[resourceId('Microsoft.Network/applicationSecurityGroups','WebServerASG')]"
+      ],
+      "properties": {
+        "securityRules": [
+          {
+            "name": "Deny-All-Inbound",
+            "properties": {
+              "priority": 2000,
+              "protocol": "*",
+              "access": "Deny",
+              "direction": "Inbound",
+              "sourceAddressPrefix": "*",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "*",
+              "description": "Deny all inbound traffic"
+            }
+          },
+          {
+            "name": "Allow-SSH-Only-From-Internet",
+            "properties": {
+              "priority": 1000,
+              "protocol": "Tcp",
+              "access": "Allow",
+              "direction": "Inbound",
+              "sourceAddressPrefix": "Internet",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "22",
+              "description": "Allow SSH from the internet"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2023-11-01",
+      "name": "WebServerNSG",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/applicationSecurityGroups','BastionHostASG')]",
+        "[resourceId('Microsoft.Network/applicationSecurityGroups','ReverseProxyASG')]",
+        "[resourceId('Microsoft.Network/applicationSecurityGroups','WebServerASG')]"
+      ],
+      "properties": {
+        "securityRules": [
+          {
+            "name": "Deny-All-Inbound",
+            "properties": {
+              "priority": 2000,
+              "protocol": "*",
+              "access": "Deny",
+              "direction": "Inbound",
+              "sourceAddressPrefix": "*",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "*",
+              "description": "Deny all inbound traffic"
+            }
+          },
+          {
+            "name": "Allow-SSH-From-BastionHost",
+            "properties": {
+              "priority": 100,
+              "protocol": "Tcp",
+              "access": "Allow",
+              "direction": "Inbound",
+              "sourceApplicationSecurityGroups": [
+                {
+                  "id": "[resourceId('Microsoft.Network/applicationSecurityGroups', 'BastionHostASG')]"
+                }
+              ],
+              "destinationApplicationSecurityGroups": [
+                {
+                  "id": "[resourceId('Microsoft.Network/applicationSecurityGroups', 'WebServerASG')]"
+                }
+              ],
+              "destinationPortRange": "22",
+              "sourcePortRange": "*",
+              "description": "Allow SSH from Bastion Host"
+            }
+          },
+          {
+            "name": "Allow-HTTP-From-ReverseProxy",
+            "properties": {
+              "priority": 110,
+              "protocol": "Tcp",
+              "access": "Allow",
+              "direction": "Inbound",
+              "sourceApplicationSecurityGroups": [
+                {
+                  "id": "[resourceId('Microsoft.Network/applicationSecurityGroups', 'ReverseProxyASG')]"
+                }
+              ],
+              "destinationApplicationSecurityGroups": [
+                {
+                  "id": "[resourceId('Microsoft.Network/applicationSecurityGroups', 'WebServerASG')]"
+                }
+              ],
+              "destinationPortRange": "5000",
+              "sourcePortRange": "*",
+              "description": "Allow HTTP from Reverse Proxy"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2023-11-01",
+      "name": "ReverseProxyNSG",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/applicationSecurityGroups','BastionHostASG')]",
+        "[resourceId('Microsoft.Network/applicationSecurityGroups','ReverseProxyASG')]",
+        "[resourceId('Microsoft.Network/applicationSecurityGroups','WebServerASG')]"
+      ],
+      "properties": {
+        "securityRules": [
+          {
+            "name": "Deny-All-Inbound",
+            "properties": {
+              "priority": 2000,
+              "protocol": "*",
+              "access": "Deny",
+              "direction": "Inbound",
+              "sourceAddressPrefix": "*",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "*",
+              "description": "Deny all inbound traffic"
+            }
+          },
+          {
+            "name": "Allow-SSH-From-BastionHost",
+            "properties": {
+              "priority": 100,
+              "protocol": "Tcp",
+              "access": "Allow",
+              "direction": "Inbound",
+              "sourceApplicationSecurityGroups": [
+                {
+                  "id": "[resourceId('Microsoft.Network/applicationSecurityGroups', 'BastionHostASG')]"
+                }
+              ],
+              "destinationApplicationSecurityGroups": [
+                {
+                  "id": "[resourceId('Microsoft.Network/applicationSecurityGroups', 'ReverseProxyASG')]"
+                }
+              ],
+              "destinationPortRange": "22",
+              "sourcePortRange": "*",
+              "description": "Allow SSH from Bastion Host"
+            }
+          },
+          {
+            "name": "Allow-HTTP",
+            "properties": {
+              "priority": 110,
+              "protocol": "Tcp",
+              "access": "Allow",
+              "direction": "Inbound",
+              "destinationPortRange": "80",
+              "destinationAddressPrefix":"*",
+              "description": "Allow HTTP traffic",
+              "sourcePortRange": "*",
+              "sourceAddressPrefix": "Internet"
+            }
+          }
+        ]
+      }
+    },
+    // Skapa NIC x3
+    // NIC 1: BastionHostNIC
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "apiVersion": "2023-11-01",
+      "name": "BastionHostNIC",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', 'myVnet')]",
+        "[resourceId('Microsoft.Network/networkSecurityGroups', 'BastionHostNSG')]",
+        "[resourceId('Microsoft.Network/publicIPAddresses', 'BastionHostPublicIP')]",
+        "[resourceId('Microsoft.Network/applicationSecurityGroups', 'BastionHostASG')]"
+      ],
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "subnet": {
+                "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'myVnet', 'default')]"
+              },
+              "privateIPAllocationMethod": "Static",
+              "privateIPAddress": "10.0.0.5",
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', 'BastionHostPublicIP')]"
+              },
+              "applicationSecurityGroups": [
+                {
+                  "id": "[resourceId('Microsoft.Network/applicationSecurityGroups', 'BastionHostASG')]"
+                }
+              ]
+            }
+          }
+        ],
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/networkSecurityGroups', 'BastionHostNSG')]"
+        }
+      }
+    },
+    // NIC 2: ReverseProxyNIC
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "apiVersion": "2023-11-01",
+      "name": "ReverseProxyNIC",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', 'myVnet')]",
+        "[resourceId('Microsoft.Network/networkSecurityGroups', 'ReverseProxyNSG')]",
+        "[resourceId('Microsoft.Network/publicIPAddresses', 'ReverseProxyPublicIP')]",
+        "[resourceId('Microsoft.Network/applicationSecurityGroups', 'ReverseProxyASG')]"
+      ],
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "subnet": {
+                "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'myVnet', 'default')]"
+              },
+              "privateIPAllocationMethod": "Static",
+              "privateIPAddress": "10.0.0.10",
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', 'ReverseProxyPublicIP')]"
+              },
+              "applicationSecurityGroups": [
+                {
+                  "id": "[resourceId('Microsoft.Network/applicationSecurityGroups', 'ReverseProxyASG')]"
+                }
+              ]
+            }
+          }
+        ],
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/networkSecurityGroups', 'ReverseProxyNSG')]"
+        }
+      }
+    },
+    // NIC 3: WebServerNIC
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "apiVersion": "2023-11-01",
+      "name": "WebServerNIC",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', 'myVnet')]",
+        "[resourceId('Microsoft.Network/networkSecurityGroups', 'WebServerNSG')]",
+        "[resourceId('Microsoft.Network/publicIPAddresses', 'WebServerPublicIP')]",
+        "[resourceId('Microsoft.Network/applicationSecurityGroups', 'WebServerASG')]"
+      ],
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "subnet": {
+                "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'myVnet', 'default')]"
+              },
+              "privateIPAllocationMethod": "Static",
+              "privateIPAddress": "10.0.0.15",
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', 'WebServerPublicIP')]"
+              },
+              "applicationSecurityGroups": [
+                {
+                  "id": "[resourceId('Microsoft.Network/applicationSecurityGroups', 'WebServerASG')]"
+                }
+              ]
+            }
+          }
+        ],
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/networkSecurityGroups', 'WebServerNSG')]"
+        }
+      }
+    },
+    // Skapa VM x3.
+    {
+    "type": "Microsoft.Compute/virtualMachines",
+    "apiVersion": "2022-03-01",
+    "name": "BastionHost",
+    "location": "[resourceGroup().location]",
+    "dependsOn": [
+        "[resourceId('Microsoft.Network/networkInterfaces', 'BastionHostNIC')]"
+    ],
+    "properties": {
+        "hardwareProfile": {
+        "vmSize": "Standard_B1s"
+        },
+        "osProfile": {
+        "computerName": "BastionHost",
+        "adminUsername": "azureuser",
+        "linuxConfiguration": {
+            "disablePasswordAuthentication": true,
+            "ssh": {
+            "publicKeys": [
+                {
+                "path": "/home/azureuser/.ssh/authorized_keys",
+                "keyData": "[parameters('adminSshKey')]"
+                }
+            ]
+            }
+        }
+        },
+        "storageProfile": {
+        "imageReference": {
+            "publisher": "Canonical",
+            "offer": "0001-com-ubuntu-server-jammy",
+            "sku": "22_04-lts-gen2",
+            "version": "latest"
+        },
+        "osDisk": {
+            "name": "bastionhost-osdisk",
+            "caching": "ReadWrite",
+            "createOption": "FromImage",
+            "managedDisk": {
+            "storageAccountType": "Standard_LRS"
+            }
+        }
+        },
+        "networkProfile": {
+        "networkInterfaces": [
+            {
+            "id": "[resourceId('Microsoft.Network/networkInterfaces', 'BastionHostNIC')]"
+            }
+        ]
+        }
+        }
+    },
+    {
+  "type": "Microsoft.Compute/virtualMachines",
+  "apiVersion": "2022-03-01",
+  "name": "WebServer",
+  "location": "[resourceGroup().location]",
+  "dependsOn": [
+    "[resourceId('Microsoft.Network/networkInterfaces', 'WebServerNIC')]"
+  ],
+  "properties": {
+    "hardwareProfile": {
+      "vmSize": "Standard_B1s"
+    },
+    "osProfile": {
+      "computerName": "WebServer",
+      "adminUsername": "azureuser",
+      "linuxConfiguration": {
+        "disablePasswordAuthentication": true,
+        "ssh": {
+          "publicKeys": [
+            {
+              "path": "/home/azureuser/.ssh/authorized_keys",
+              "keyData": "[parameters('adminSshKey')]"
+            }
+          ]
+        }
+      },
+      "customData": "[base64(parameters('WebServer-Cloud'))]"
+    },
+    "storageProfile": {
+      "imageReference": {
+        "publisher": "Canonical",
+        "offer": "0001-com-ubuntu-server-jammy",
+        "sku": "22_04-lts-gen2",
+        "version": "latest"
+      },
+      "osDisk": {
+        "name": "webserver-osdisk",
+        "caching": "ReadWrite",
+        "createOption": "FromImage",
+        "managedDisk": {
+          "storageAccountType": "Standard_LRS"
+        }
+      }
+    },
+    "networkProfile": {
+      "networkInterfaces": [
+        {
+          "id": "[resourceId('Microsoft.Network/networkInterfaces', 'WebServerNIC')]"
+        }
+      ]
+    }
+    }
+    },
+    {
+  "type": "Microsoft.Compute/virtualMachines",
+  "apiVersion": "2022-03-01",
+  "name": "ReverseProxy",
+  "location": "[resourceGroup().location]",
+  "dependsOn": [
+    "[resourceId('Microsoft.Network/networkInterfaces', 'ReverseProxyNIC')]"
+  ],
+  "properties": {
+    "hardwareProfile": {
+      "vmSize": "Standard_B1s"
+    },
+    "osProfile": {
+      "computerName": "ReverseProxy",
+      "adminUsername": "azureuser",
+      "linuxConfiguration": {
+        "disablePasswordAuthentication": true,
+        "ssh": {
+          "publicKeys": [
+            {
+              "path": "/home/azureuser/.ssh/authorized_keys",
+              "keyData": "[parameters('adminSshKey')]"
+            }
+          ]
+        }
+      },
+      "customData": "[base64(parameters('ReverseProxy-Cloud'))]"
+    },
+    "storageProfile": {
+      "imageReference": {
+        "publisher": "Canonical",
+        "offer": "0001-com-ubuntu-server-jammy",
+        "sku": "22_04-lts-gen2",
+        "version": "latest"
+      },
+      "osDisk": {
+        "name": "reverseproxy-osdisk",
+        "caching": "ReadWrite",
+        "createOption": "FromImage",
+        "managedDisk": {
+          "storageAccountType": "Standard_LRS"
+        }
+      }
+    },
+    "networkProfile": {
+      "networkInterfaces": [
+        {
+          "id": "[resourceId('Microsoft.Network/networkInterfaces', 'ReverseProxyNIC')]"
+        }
+      ]
+    }
+    }
+    }
+],
+"outputs": {}
+}
