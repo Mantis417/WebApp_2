@@ -55,4 +55,4 @@ jobs:
 
     - name: Start the application service
       run: |
-        sudo systemctl start WebApp_2.service        
+        sudo systemctl start WebApp_2.service
