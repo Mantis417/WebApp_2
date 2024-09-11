@@ -73,7 +73,7 @@
             ]
         }
     },
-    // Public IP x3
+    // Public IP x2, Webserver får ingen.
     {
       "type": "Microsoft.Network/publicIPAddresses",
       "apiVersion": "2023-11-01",
@@ -87,15 +87,6 @@
       "type": "Microsoft.Network/publicIPAddresses",
       "apiVersion": "2023-11-01",
       "name": "ReverseProxyPublicIP",
-      "location": "[resourceGroup().location]",
-      "properties": {
-        "publicIPAllocationMethod": "Dynamic"
-      }
-    },
-    {
-      "type": "Microsoft.Network/publicIPAddresses",
-      "apiVersion": "2023-11-01",
-      "name": "WebServerPublicIP",
       "location": "[resourceGroup().location]",
       "properties": {
         "publicIPAllocationMethod": "Dynamic"
@@ -391,7 +382,6 @@
       "dependsOn": [
         "[resourceId('Microsoft.Network/virtualNetworks', 'myVnet')]",
         "[resourceId('Microsoft.Network/networkSecurityGroups', 'WebServerNSG')]",
-        "[resourceId('Microsoft.Network/publicIPAddresses', 'WebServerPublicIP')]",
         "[resourceId('Microsoft.Network/applicationSecurityGroups', 'WebServerASG')]"
       ],
       "properties": {
@@ -404,9 +394,6 @@
               },
               "privateIPAllocationMethod": "Static",
               "privateIPAddress": "10.0.0.15",
-              "publicIPAddress": {
-                "id": "[resourceId('Microsoft.Network/publicIPAddresses', 'WebServerPublicIP')]"
-              },
               "applicationSecurityGroups": [
                 {
                   "id": "[resourceId('Microsoft.Network/applicationSecurityGroups', 'WebServerASG')]"
